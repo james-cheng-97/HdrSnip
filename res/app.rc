@@ -1,0 +1,2 @@
+// Resource 1 is the app icon: Explorer, the taskbar and the Start menu pick the lowest ID.
+1 ICON "app.ico"

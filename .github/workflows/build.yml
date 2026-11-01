@@ -1,0 +1,44 @@
+# Builds on every push and pull request. Pushing a tag like v1.0.0 also publishes a GitHub Release
+# with HdrSnip-<tag>-win-x64.zip attached.
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: write # needed only by the release step, to create the release
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -A x64
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $name = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { $env:GITHUB_SHA.Substring(0, 7) }
+          New-Item -ItemType Directory dist | Out-Null
+          Copy-Item build/Release/HdrSnip.exe, LICENSE, README.md dist/
+          Compress-Archive dist/* "HdrSnip-$name-win-x64.zip"
+          "ZIP=HdrSnip-$name-win-x64.zip" >> $env:GITHUB_ENV
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HdrSnip
+          path: ${{ env.ZIP }}
+
+      - name: Release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" "${{ env.ZIP }}" --title "HdrSnip ${{ github.ref_name }}" --generate-notes
