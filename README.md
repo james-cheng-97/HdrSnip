@@ -22,8 +22,9 @@ what that means. Change it any time from **Settings** (gear button) or the tray 
 key* and *About the Print Screen key…*. When on, HdrSnip catches the key with a low-level keyboard hook,
 so it works even when Snipping Tool or keyboard utilities (G HUB, etc.) try to grab it; only Print Screen
 is caught, every other key passes through untouched. When off, the key goes straight back to Windows.
-To make it open Snipping Tool again, turn on *Settings → Accessibility → Keyboard → "Use the Print screen
-key to open screen capture"*; HdrSnip offers to open that page when you switch Print Screen off.
+To make it open Snipping Tool again, turn on *Settings → Bluetooth & devices → Keyboard → Shortcuts and
+hotkeys → "Use the Print screen key to open screen capture"* (older Windows 11: *Accessibility →
+Keyboard*); HdrSnip offers to open that page when you switch Print Screen off.
 
 | | |
 |---|---|

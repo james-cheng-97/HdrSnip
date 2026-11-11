@@ -316,7 +316,9 @@ namespace
 
     // --- Print Screen ownership: opt-in, switchable, and explained in the UI. ---
 
-    constexpr wchar_t kWindowsKeyboardSettings[] = L"ms-settings:easeofaccess-keyboard";
+    // Bluetooth & devices > Keyboard > Shortcuts and hotkeys (Windows 11 26H2). Older builds had the
+    // setting under Accessibility > Keyboard, which the dialog text mentions.
+    constexpr wchar_t kWindowsKeyboardSettings[] = L"ms-settings:devices-keyboard";
 
     // "UsePrintScreen" is absent until the user has answered the first-run question.
     std::optional<bool> PrintScreenChoice()
@@ -394,12 +396,13 @@ namespace
             L"While HdrSnip is running (including from the tray), it can take over Print Screen. It catches "
             L"only that key; everything else you type works as usual.\n\n"
             L"If you leave Print Screen to Windows, it keeps its normal behavior: it opens Snipping Tool when "
-            L"“Use the Print screen key to open screen capture” is on in Windows Settings, and otherwise "
-            L"copies the screen to the clipboard.";
+            L"“Use the Print screen key to open screen capture” is on (Windows Settings → "
+            L"Bluetooth & devices → Keyboard → Shortcuts and hotkeys; on older versions, "
+            L"Accessibility → Keyboard), and otherwise copies the screen to the clipboard.";
         cfg.pszFooterIcon = TD_INFORMATION_ICON;
         cfg.pszFooter =
             L"Change this any time from Settings (gear) in the HdrSnip window or the tray icon menu. "
-            L"<a href=\"ms-settings:easeofaccess-keyboard\">Open Windows keyboard settings</a>";
+            L"<a href=\"ms-settings:devices-keyboard\">Open Windows keyboard settings</a>";
         cfg.cButtons = ARRAYSIZE(buttons);
         cfg.pButtons = buttons;
         cfg.nDefaultButton = g_printScreen || !PrintScreenChoice() ? kUse : kDontUse;
@@ -429,7 +432,8 @@ namespace
         cfg.pszMainInstruction = L"Print Screen is back with Windows";
         cfg.pszContent =
             L"Windows’ own Print Screen shortcut is currently off, so the key won’t open Snipping Tool. "
-            L"To get that back, turn on “Use the Print screen key to open screen capture”.";
+            L"To get that back, turn on “Use the Print screen key to open screen capture” under "
+            L"Bluetooth & devices → Keyboard → Shortcuts and hotkeys.";
         cfg.cButtons = ARRAYSIZE(buttons);
         cfg.pButtons = buttons;
         int pressed = 0;
