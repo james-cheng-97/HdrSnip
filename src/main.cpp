@@ -105,6 +105,7 @@ namespace
     constexpr wchar_t kSettingsKey[] = L"Software\\HdrSnip";
     constexpr wchar_t kRunKey[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
     constexpr UINT kTrayMessage = WM_APP + 1;
+    constexpr UINT kPrintScreenPressed = WM_APP + 2;
     enum TrayCommand { kTraySnip = 1, kTrayStream, kTrayOpen, kTrayAutostart, kTrayQuit };
     HWND g_main = nullptr;
     bool g_printScreen = false; // whether we own the Print Screen key
@@ -188,6 +189,61 @@ namespace
             ? L"Press Print Screen to snip. Right-click the tray icon to quit."
             : L"Press Ctrl+Alt+S to snip. Right-click the tray icon to quit.");
         Shell_NotifyIconW(NIM_MODIFY, &nid);
+    }
+
+    // Low-level Print Screen watcher. Keyboard utilities and Snipping Tool can swallow Print Screen with
+    // their own low-level hooks before Windows turns it into a hotkey; the newest hook runs first, so
+    // ours sees the key before theirs. It consumes Print Screen only and passes every other key on.
+    // It lives on its own thread: a hook whose thread is busy (e.g. during a capture) gets skipped
+    // and eventually removed by Windows.
+    DWORD g_hookThreadId = 0;
+    HANDLE g_hookThread = nullptr;
+
+    LRESULT CALLBACK PrintScreenHook(int code, WPARAM wp, LPARAM lp)
+    {
+        auto key = reinterpret_cast<const KBDLLHOOKSTRUCT*>(lp);
+        if (code == HC_ACTION && key->vkCode == VK_SNAPSHOT && g_main)
+        {
+            if (wp == WM_KEYDOWN || wp == WM_SYSKEYDOWN) PostMessageW(g_main, kPrintScreenPressed, 0, 0);
+            return 1;
+        }
+        return CallNextHookEx(nullptr, code, wp, lp);
+    }
+
+    HANDLE g_hookReady = nullptr;
+
+    DWORD WINAPI PrintScreenHookThread(LPVOID)
+    {
+        MSG msg;
+        PeekMessageW(&msg, nullptr, WM_USER, WM_USER, PM_NOREMOVE); // create the queue so WM_QUIT can reach us
+        HHOOK hook = SetWindowsHookExW(WH_KEYBOARD_LL, PrintScreenHook, GetModuleHandleW(nullptr), 0);
+        SetEvent(g_hookReady);
+        if (!hook) return 1;
+        while (GetMessageW(&msg, nullptr, 0, 0) > 0) {}
+        UnhookWindowsHookEx(hook);
+        return 0;
+    }
+
+    bool StartPrintScreenHook()
+    {
+        g_hookReady = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        g_hookThread = CreateThread(nullptr, 0, PrintScreenHookThread, nullptr, 0, &g_hookThreadId);
+        if (!g_hookThread) return false;
+        // Wait until the hook is in place or has failed; a thread that already exited means it failed.
+        HANDLE waits[] = { g_hookReady, g_hookThread };
+        WaitForMultipleObjects(2, waits, FALSE, 2000);
+        DWORD exitCode = 0;
+        return GetExitCodeThread(g_hookThread, &exitCode) && exitCode == STILL_ACTIVE;
+    }
+
+    void StopPrintScreenHook()
+    {
+        if (!g_hookThread) return;
+        PostThreadMessageW(g_hookThreadId, WM_QUIT, 0, 0);
+        WaitForSingleObject(g_hookThread, 2000);
+        CloseHandle(g_hookThread);
+        CloseHandle(g_hookReady);
+        g_hookThread = g_hookReady = nullptr;
     }
 
     void ShowLauncher()
@@ -345,6 +401,9 @@ namespace
         }
         switch (msg)
         {
+        case kPrintScreenPressed:
+            SnipFromLauncher();
+            return 0;
         case kTrayMessage: // NOTIFYICON_VERSION_4: the event is in LOWORD(lp)
             switch (LOWORD(lp))
             {
@@ -522,14 +581,18 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         return 0;
     }
 
-    // Hotkeys are a bonus; the launcher still works if another app owns them. Print Screen is only
-    // free once Windows' "Use the Print screen key to open screen capture" setting is off.
+    // Hotkeys are a bonus; the launcher still works if another app owns them. Print Screen goes through
+    // the low-level watcher (reliable even when other apps hook the key); the registered hotkey is a
+    // fallback in case the watcher can't start. A key consumed by the watcher never reaches the hotkey,
+    // so one press snips once.
     RegisterHotKey(nullptr, kSnip, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'S');
     RegisterHotKey(nullptr, kQuit, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'Q');
-    g_printScreen = RegisterHotKey(nullptr, kSnipPrintScreen, MOD_NOREPEAT, VK_SNAPSHOT) != FALSE;
+    const bool printScreenHotkey = RegisterHotKey(nullptr, kSnipPrintScreen, MOD_NOREPEAT, VK_SNAPSHOT) != FALSE;
+    g_printScreen = StartPrintScreenHook() || printScreenHotkey; // before the tray tooltip/hint read it
     CreateLauncher(arg != L"--tray"); // --tray: start hidden (used by Start with Windows)
     if (arg == L"--stream") OpenShareWindow(arg2.c_str()); // optional: part of a window title
     RunMessageLoop(false);
+    StopPrintScreenHook();
     UnregisterHotKey(nullptr, kSnip);
     UnregisterHotKey(nullptr, kQuit);
     UnregisterHotKey(nullptr, kSnipPrintScreen);

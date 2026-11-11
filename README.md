@@ -16,10 +16,11 @@ hides HdrSnip to the notification area (tray), where it keeps listening for **Pr
 **Ctrl+Alt+S**. Click the tray icon to reopen the window; right-click it for New snip, Stream,
 **Start with Windows** and Quit. Launching the exe again brings the existing window forward.
 
-**Print Screen:** Windows 11 gives this key to its own Snipping Tool by default. Turn off
-*Settings → Accessibility → Keyboard → "Use the Print screen key to open screen capture"*, then restart
-HdrSnip. The window's hint text says which key is active. If another app (keyboard software, OneDrive,
-Dropbox) still holds Print Screen, HdrSnip falls back to Ctrl+Alt+S.
+**Print Screen:** HdrSnip watches for the key with a low-level keyboard hook, so it works even when
+Snipping Tool or keyboard utilities (G HUB, etc.) try to grab it. Only Print Screen is caught; every
+other key passes through untouched. For a clean setup, also turn off Windows' own binding:
+*Settings → Accessibility → Keyboard → "Use the Print screen key to open screen capture"*. The window's
+hint text says which snip key is active; if Print Screen can't be claimed, HdrSnip uses Ctrl+Alt+S.
 
 | | |
 |---|---|
