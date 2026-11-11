@@ -381,8 +381,8 @@ namespace
     {
         enum { kUse = 100, kDontUse = 101 };
         const TASKDIALOG_BUTTON buttons[] = {
-            { kUse, L"Use Print Screen for HdrSnip\nPressing Print Screen starts an HDR-correct snip." },
-            { kDontUse, L"Leave Print Screen to Windows\nSnip with Ctrl+Alt+S or the New button instead." },
+            { kUse, L"Yes, use HdrSnip\nPrint Screen takes an HDR-correct snip." },
+            { kDontUse, L"No, keep Windows\nPrint Screen works as before. Snip with Ctrl+Alt+S." },
         };
         TASKDIALOGCONFIG cfg{ sizeof(cfg) };
         cfg.hwndParent = owner;
@@ -392,17 +392,9 @@ namespace
         cfg.pszWindowTitle = L"HdrSnip";
         cfg.pszMainIcon = MAKEINTRESOURCEW(1);
         cfg.pszMainInstruction = L"Use the Print Screen key for HdrSnip?";
-        cfg.pszContent =
-            L"While HdrSnip is running (including from the tray), it can take over Print Screen. It catches "
-            L"only that key; everything else you type works as usual.\n\n"
-            L"If you leave Print Screen to Windows, it keeps its normal behavior: it opens Snipping Tool when "
-            L"“Use the Print screen key to open screen capture” is on (Windows Settings → "
-            L"Bluetooth & devices → Keyboard → Shortcuts and hotkeys; on older versions, "
-            L"Accessibility → Keyboard), and otherwise copies the screen to the clipboard.";
+        cfg.pszContent = L"Only that key is affected, and only while HdrSnip is running.";
         cfg.pszFooterIcon = TD_INFORMATION_ICON;
-        cfg.pszFooter =
-            L"Change this any time from Settings (gear) in the HdrSnip window or the tray icon menu. "
-            L"<a href=\"ms-settings:devices-keyboard\">Open Windows keyboard settings</a>";
+        cfg.pszFooter = L"You can change this any time under Settings (gear icon).";
         cfg.cButtons = ARRAYSIZE(buttons);
         cfg.pButtons = buttons;
         cfg.nDefaultButton = g_printScreen || !PrintScreenChoice() ? kUse : kDontUse;
@@ -421,7 +413,7 @@ namespace
     {
         if (WindowsPrintScreenOpensSnipping()) return;
         enum { kOpen = 100 };
-        const TASKDIALOG_BUTTON buttons[] = { { kOpen, L"Open Windows keyboard settings" } };
+        const TASKDIALOG_BUTTON buttons[] = { { kOpen, L"Open settings" } };
         TASKDIALOGCONFIG cfg{ sizeof(cfg) };
         cfg.hwndParent = owner;
         cfg.hInstance = GetModuleHandleW(nullptr);
@@ -429,11 +421,8 @@ namespace
         cfg.dwCommonButtons = TDCBF_CLOSE_BUTTON;
         cfg.pszWindowTitle = L"HdrSnip";
         cfg.pszMainIcon = TD_INFORMATION_ICON;
-        cfg.pszMainInstruction = L"Print Screen is back with Windows";
-        cfg.pszContent =
-            L"Windows’ own Print Screen shortcut is currently off, so the key won’t open Snipping Tool. "
-            L"To get that back, turn on “Use the Print screen key to open screen capture” under "
-            L"Bluetooth & devices → Keyboard → Shortcuts and hotkeys.";
+        cfg.pszMainInstruction = L"Want Print Screen to open Snipping Tool again?";
+        cfg.pszContent = L"In the settings page that opens, turn on “Use the Print screen key to open screen capture”.";
         cfg.cButtons = ARRAYSIZE(buttons);
         cfg.pButtons = buttons;
         int pressed = 0;
