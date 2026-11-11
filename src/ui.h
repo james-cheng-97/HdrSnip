@@ -35,4 +35,5 @@ namespace ui
     inline constexpr wchar_t kGlyphCopy[] = L"";
     inline constexpr wchar_t kGlyphStream[] = L"";
     inline constexpr wchar_t kGlyphDelay[] = L"";
+    inline constexpr wchar_t kGlyphSettings[] = L"";
 }

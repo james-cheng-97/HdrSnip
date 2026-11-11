@@ -14,13 +14,16 @@ reads the monitor's **SDR content brightness**, and tone-maps properly:
 Launch `HdrSnip.exe` to open a small window with a **+ New snip** button (Ctrl+N). Closing the window
 hides HdrSnip to the notification area (tray), where it keeps listening for **Print Screen** and
 **Ctrl+Alt+S**. Click the tray icon to reopen the window; right-click it for New snip, Stream,
-**Start with Windows** and Quit. Launching the exe again brings the existing window forward.
+the settings below and Quit. **Settings** (gear, top right of the window) has *Use Print Screen key*,
+*About the Print Screen key…* and *Start with Windows*. Launching the exe again brings the existing window forward.
 
-**Print Screen:** HdrSnip watches for the key with a low-level keyboard hook, so it works even when
-Snipping Tool or keyboard utilities (G HUB, etc.) try to grab it. Only Print Screen is caught; every
-other key passes through untouched. For a clean setup, also turn off Windows' own binding:
-*Settings → Accessibility → Keyboard → "Use the Print screen key to open screen capture"*. The window's
-hint text says which snip key is active; if Print Screen can't be claimed, HdrSnip uses Ctrl+Alt+S.
+**Print Screen (opt-in):** on first launch HdrSnip asks whether to take over Print Screen, and explains
+what that means. Change it any time from **Settings** (gear button) or the tray menu: *Use Print Screen
+key* and *About the Print Screen key…*. When on, HdrSnip catches the key with a low-level keyboard hook,
+so it works even when Snipping Tool or keyboard utilities (G HUB, etc.) try to grab it; only Print Screen
+is caught, every other key passes through untouched. When off, the key goes straight back to Windows.
+To make it open Snipping Tool again, turn on *Settings → Accessibility → Keyboard → "Use the Print screen
+key to open screen capture"*; HdrSnip offers to open that page when you switch Print Screen off.
 
 | | |
 |---|---|

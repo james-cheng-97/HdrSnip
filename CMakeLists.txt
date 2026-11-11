@@ -18,4 +18,5 @@ add_executable(HdrSnip WIN32
 
 target_compile_definitions(HdrSnip PRIVATE UNICODE _UNICODE NOMINMAX)
 target_compile_options(HdrSnip PRIVATE /W4 /permissive- /EHsc /utf-8)
-target_link_libraries(HdrSnip PRIVATE d3d11 dxgi windowscodecs windowsapp shlwapi dwmapi gdiplus d3dcompiler CoreMessaging)
+target_link_libraries(HdrSnip PRIVATE d3d11 dxgi windowscodecs windowsapp shlwapi dwmapi gdiplus d3dcompiler CoreMessaging comctl32)
+target_link_options(HdrSnip PRIVATE /MANIFEST:NO) # res/app.manifest is embedded via app.rc

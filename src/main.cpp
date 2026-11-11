@@ -9,6 +9,7 @@
 #include <winrt/base.h>
 #include <dwmapi.h>
 #include <shellapi.h>
+#include <commctrl.h>
 #include <cstring>
 #include <memory>
 #include <optional>
@@ -106,7 +107,8 @@ namespace
     constexpr wchar_t kRunKey[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
     constexpr UINT kTrayMessage = WM_APP + 1;
     constexpr UINT kPrintScreenPressed = WM_APP + 2;
-    enum TrayCommand { kTraySnip = 1, kTrayStream, kTrayOpen, kTrayAutostart, kTrayQuit };
+    enum TrayCommand { kTraySnip = 1, kTrayStream, kTrayOpen, kTrayQuit };
+    constexpr int kSettings = 204;
     HWND g_main = nullptr;
     bool g_printScreen = false; // whether we own the Print Screen key
     UINT g_taskbarCreated = 0;  // Explorer restarted: the tray icon must be re-added
@@ -258,6 +260,9 @@ namespace
         MoveWindow(GetDlgItem(hwnd, kNewSnip), ui::Px(hwnd, 12), y, ui::Px(hwnd, 92), h, repaint);
         MoveWindow(GetDlgItem(hwnd, kDelay), ui::Px(hwnd, 12 + 92 + 4), y, ui::Px(hwnd, 120), h, repaint);
         MoveWindow(GetDlgItem(hwnd, kStream), ui::Px(hwnd, 12 + 92 + 4 + 120 + 4), y, ui::Px(hwnd, 104), h, repaint);
+        RECT rc;
+        GetClientRect(hwnd, &rc);
+        MoveWindow(GetDlgItem(hwnd, kSettings), rc.right - ui::Px(hwnd, 12 + 40), y, ui::Px(hwnd, 40), h, repaint);
     }
     int g_delaySeconds = 0;     // Snipping-Tool-style delay for New (the hotkeys are always instant)
     bool g_delayPending = false;
@@ -309,6 +314,174 @@ namespace
         SetTimer(g_main, kDelayTimer, UINT(g_delaySeconds) * 1000, nullptr);
     }
 
+    // --- Print Screen ownership: opt-in, switchable, and explained in the UI. ---
+
+    constexpr wchar_t kWindowsKeyboardSettings[] = L"ms-settings:easeofaccess-keyboard";
+
+    // "UsePrintScreen" is absent until the user has answered the first-run question.
+    std::optional<bool> PrintScreenChoice()
+    {
+        DWORD value = 0, size = sizeof(value);
+        if (RegGetValueW(HKEY_CURRENT_USER, kSettingsKey, L"UsePrintScreen", RRF_RT_REG_DWORD, nullptr, &value, &size) != ERROR_SUCCESS)
+            return std::nullopt;
+        return value != 0;
+    }
+
+    // Windows' own "Use the Print screen key to open screen capture" (on by default in Windows 11).
+    bool WindowsPrintScreenOpensSnipping()
+    {
+        DWORD value = 1, size = sizeof(value);
+        RegGetValueW(HKEY_CURRENT_USER, L"Control Panel\\Keyboard", L"PrintScreenKeyForSnippingEnabled",
+            RRF_RT_REG_DWORD, nullptr, &value, &size);
+        return value != 0;
+    }
+
+    void UpdateTrayTip()
+    {
+        NOTIFYICONDATAW nid{ sizeof(nid) };
+        nid.hWnd = g_main;
+        nid.uFlags = NIF_TIP | NIF_SHOWTIP;
+        wcscpy_s(nid.szTip, g_printScreen ? L"HdrSnip — Print Screen to snip" : L"HdrSnip — Ctrl+Alt+S to snip");
+        Shell_NotifyIconW(NIM_MODIFY, &nid);
+    }
+
+    // Takes or releases Print Screen right away; releasing hands the key straight back to Windows.
+    void SetPrintScreen(bool on)
+    {
+        if (on && !g_printScreen)
+        {
+            const bool hotkey = RegisterHotKey(nullptr, kSnipPrintScreen, MOD_NOREPEAT, VK_SNAPSHOT) != FALSE;
+            g_printScreen = StartPrintScreenHook() || hotkey;
+        }
+        else if (!on && g_printScreen)
+        {
+            StopPrintScreenHook();
+            UnregisterHotKey(nullptr, kSnipPrintScreen);
+            g_printScreen = false;
+        }
+        if (g_main)
+        {
+            UpdateTrayTip();
+            InvalidateRect(g_main, nullptr, FALSE); // the hint text names the active key
+        }
+    }
+
+    HRESULT CALLBACK OpenLinkCallback(HWND, UINT notification, WPARAM, LPARAM lp, LONG_PTR)
+    {
+        if (notification == TDN_HYPERLINK_CLICKED)
+            ShellExecuteW(nullptr, L"open", reinterpret_cast<LPCWSTR>(lp), nullptr, nullptr, SW_SHOWNORMAL);
+        return S_OK;
+    }
+
+    // The explanation and choice, shown on first run and from "About the Print Screen key…".
+    // Returns the choice, or nothing if the dialog was dismissed.
+    std::optional<bool> AskAboutPrintScreen(HWND owner)
+    {
+        enum { kUse = 100, kDontUse = 101 };
+        const TASKDIALOG_BUTTON buttons[] = {
+            { kUse, L"Use Print Screen for HdrSnip\nPressing Print Screen starts an HDR-correct snip." },
+            { kDontUse, L"Leave Print Screen to Windows\nSnip with Ctrl+Alt+S or the New button instead." },
+        };
+        TASKDIALOGCONFIG cfg{ sizeof(cfg) };
+        cfg.hwndParent = owner;
+        cfg.hInstance = GetModuleHandleW(nullptr);
+        cfg.dwFlags = TDF_USE_COMMAND_LINKS | TDF_ENABLE_HYPERLINKS | TDF_ALLOW_DIALOG_CANCELLATION |
+            TDF_POSITION_RELATIVE_TO_WINDOW;
+        cfg.pszWindowTitle = L"HdrSnip";
+        cfg.pszMainIcon = MAKEINTRESOURCEW(1);
+        cfg.pszMainInstruction = L"Use the Print Screen key for HdrSnip?";
+        cfg.pszContent =
+            L"While HdrSnip is running (including from the tray), it can take over Print Screen. It catches "
+            L"only that key; everything else you type works as usual.\n\n"
+            L"If you leave Print Screen to Windows, it keeps its normal behavior: it opens Snipping Tool when "
+            L"“Use the Print screen key to open screen capture” is on in Windows Settings, and otherwise "
+            L"copies the screen to the clipboard.";
+        cfg.pszFooterIcon = TD_INFORMATION_ICON;
+        cfg.pszFooter =
+            L"Change this any time from Settings (gear) in the HdrSnip window or the tray icon menu. "
+            L"<a href=\"ms-settings:easeofaccess-keyboard\">Open Windows keyboard settings</a>";
+        cfg.cButtons = ARRAYSIZE(buttons);
+        cfg.pButtons = buttons;
+        cfg.nDefaultButton = g_printScreen || !PrintScreenChoice() ? kUse : kDontUse;
+        cfg.pfCallback = OpenLinkCallback;
+
+        int pressed = 0;
+        if (FAILED(TaskDialogIndirect(&cfg, &pressed, nullptr, nullptr))) return std::nullopt;
+        if (pressed == kUse) return true;
+        if (pressed == kDontUse) return false;
+        return std::nullopt; // closed with Esc / X
+    }
+
+    // Turning it off when Windows' own Print Screen shortcut is also off would leave the key doing
+    // almost nothing, so offer the Windows setting that brings Snipping Tool back.
+    void OfferSnippingToolBack(HWND owner)
+    {
+        if (WindowsPrintScreenOpensSnipping()) return;
+        enum { kOpen = 100 };
+        const TASKDIALOG_BUTTON buttons[] = { { kOpen, L"Open Windows keyboard settings" } };
+        TASKDIALOGCONFIG cfg{ sizeof(cfg) };
+        cfg.hwndParent = owner;
+        cfg.hInstance = GetModuleHandleW(nullptr);
+        cfg.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_POSITION_RELATIVE_TO_WINDOW;
+        cfg.dwCommonButtons = TDCBF_CLOSE_BUTTON;
+        cfg.pszWindowTitle = L"HdrSnip";
+        cfg.pszMainIcon = TD_INFORMATION_ICON;
+        cfg.pszMainInstruction = L"Print Screen is back with Windows";
+        cfg.pszContent =
+            L"Windows’ own Print Screen shortcut is currently off, so the key won’t open Snipping Tool. "
+            L"To get that back, turn on “Use the Print screen key to open screen capture”.";
+        cfg.cButtons = ARRAYSIZE(buttons);
+        cfg.pButtons = buttons;
+        int pressed = 0;
+        if (SUCCEEDED(TaskDialogIndirect(&cfg, &pressed, nullptr, nullptr)) && pressed == kOpen)
+            ShellExecuteW(nullptr, L"open", kWindowsKeyboardSettings, nullptr, nullptr, SW_SHOWNORMAL);
+    }
+
+    void ApplyPrintScreenChoice(HWND owner, bool on)
+    {
+        WriteFlag(L"UsePrintScreen", on);
+        const bool wasOn = g_printScreen;
+        SetPrintScreen(on);
+        if (wasOn && !on) OfferSnippingToolBack(owner);
+    }
+
+    void ExplainPrintScreen(HWND owner)
+    {
+        if (auto choice = AskAboutPrintScreen(owner)) ApplyPrintScreenChoice(owner, *choice);
+    }
+
+    // Settings items shared by the gear menu and the tray menu.
+    enum SettingsCommand { kSetPrintScreen = 50, kSetAboutPrintScreen, kSetAutostart };
+
+    void AppendSettingsItems(HMENU menu)
+    {
+        AppendMenuW(menu, MF_STRING | (g_printScreen ? MF_CHECKED : 0), kSetPrintScreen, L"Use Print Screen key");
+        AppendMenuW(menu, MF_STRING, kSetAboutPrintScreen, L"About the Print Screen key…");
+        AppendMenuW(menu, MF_STRING | (IsAutostartOn() ? MF_CHECKED : 0), kSetAutostart, L"Start with Windows");
+    }
+
+    bool HandleSettingsCommand(HWND owner, UINT id)
+    {
+        switch (id)
+        {
+        case kSetPrintScreen: ApplyPrintScreenChoice(owner, !g_printScreen); return true;
+        case kSetAboutPrintScreen: ExplainPrintScreen(owner); return true;
+        case kSetAutostart: SetAutostart(!IsAutostartOn()); return true;
+        }
+        return false;
+    }
+
+    void ShowSettingsMenu(HWND hwnd, HWND button)
+    {
+        HMENU menu = CreatePopupMenu();
+        AppendSettingsItems(menu);
+        RECT r;
+        GetWindowRect(button, &r);
+        const UINT id = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTALIGN, r.right, r.bottom, 0, hwnd, nullptr);
+        DestroyMenu(menu);
+        HandleSettingsCommand(hwnd, id);
+    }
+
     void ShowTrayMenu(HWND hwnd)
     {
         HMENU menu = CreatePopupMenu();
@@ -316,7 +489,7 @@ namespace
         AppendMenuW(menu, MF_STRING, kTrayStream, L"Stream…");
         AppendMenuW(menu, MF_STRING, kTrayOpen, L"Open HdrSnip");
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(menu, MF_STRING | (IsAutostartOn() ? MF_CHECKED : 0), kTrayAutostart, L"Start with Windows");
+        AppendSettingsItems(menu);
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(menu, MF_STRING, kTrayQuit, L"Quit");
         SetMenuDefaultItem(menu, kTrayOpen, FALSE);
@@ -326,12 +499,12 @@ namespace
         SetForegroundWindow(hwnd); // required, or the menu won't close when clicking elsewhere
         const UINT id = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, nullptr);
         DestroyMenu(menu);
+        if (HandleSettingsCommand(hwnd, id)) return;
         switch (id)
         {
         case kTraySnip: SnipFromLauncher(); break;
         case kTrayStream: ChooseStreamSource(hwnd); break;
         case kTrayOpen: ShowLauncher(); break;
-        case kTrayAutostart: SetAutostart(!IsAutostartOn()); break;
         case kTrayQuit: DestroyWindow(hwnd); break;
         }
     }
@@ -425,6 +598,7 @@ namespace
             ui::CreateButton(hwnd, kNewSnip, ui::kGlyphAdd, L"New", ui::ButtonStyle::Accent);
             ui::CreateButton(hwnd, kDelay, ui::kGlyphDelay, DelayLabel(g_delaySeconds).c_str(), ui::ButtonStyle::Subtle);
             ui::CreateButton(hwnd, kStream, ui::kGlyphStream, L"Stream", ui::ButtonStyle::Subtle);
+            ui::CreateButton(hwnd, kSettings, ui::kGlyphSettings, L"", ui::ButtonStyle::Subtle);
             LayoutLauncher(hwnd, FALSE);
             ui::ApplyChrome(hwnd);
             BOOL disable = TRUE;
@@ -455,6 +629,7 @@ namespace
             if (LOWORD(wp) == kNewSnip) NewSnipWithDelay();
             if (LOWORD(wp) == kDelay) ChooseDelay(hwnd);
             if (LOWORD(wp) == kStream) ChooseStreamSource(hwnd);
+            if (LOWORD(wp) == kSettings) ShowSettingsMenu(hwnd, GetDlgItem(hwnd, kSettings));
             return 0;
         case WM_TIMER:
             if (wp == kDelayTimer)
@@ -581,18 +756,20 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         return 0;
     }
 
-    // Hotkeys are a bonus; the launcher still works if another app owns them. Print Screen goes through
-    // the low-level watcher (reliable even when other apps hook the key); the registered hotkey is a
-    // fallback in case the watcher can't start. A key consumed by the watcher never reaches the hotkey,
-    // so one press snips once.
+    // Hotkeys are a bonus; the launcher still works if another app owns them. Print Screen is opt-in:
+    // it goes through the low-level watcher (reliable even when other apps hook the key), with a
+    // registered hotkey as a fallback in case the watcher can't start. A key consumed by the watcher
+    // never reaches the hotkey, so one press snips once.
     RegisterHotKey(nullptr, kSnip, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'S');
     RegisterHotKey(nullptr, kQuit, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'Q');
-    const bool printScreenHotkey = RegisterHotKey(nullptr, kSnipPrintScreen, MOD_NOREPEAT, VK_SNAPSHOT) != FALSE;
-    g_printScreen = StartPrintScreenHook() || printScreenHotkey; // before the tray tooltip/hint read it
+    const auto printScreenChoice = PrintScreenChoice();
+    SetPrintScreen(printScreenChoice.value_or(false)); // before the tray tooltip/hint read it
     CreateLauncher(arg != L"--tray"); // --tray: start hidden (used by Start with Windows)
+    // First run: explain Print Screen and let the user choose (not when starting silently in the tray).
+    if (!printScreenChoice && arg != L"--tray") ExplainPrintScreen(g_main);
     if (arg == L"--stream") OpenShareWindow(arg2.c_str()); // optional: part of a window title
     RunMessageLoop(false);
-    StopPrintScreenHook();
+    SetPrintScreen(false);
     UnregisterHotKey(nullptr, kSnip);
     UnregisterHotKey(nullptr, kQuit);
     UnregisterHotKey(nullptr, kSnipPrintScreen);
