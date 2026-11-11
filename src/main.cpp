@@ -392,7 +392,9 @@ namespace
         cfg.pszWindowTitle = L"HdrSnip";
         cfg.pszMainIcon = MAKEINTRESOURCEW(1);
         cfg.pszMainInstruction = L"Use the Print Screen key for HdrSnip?";
-        cfg.pszContent = L"Only that key is affected, and only while HdrSnip is running.";
+        cfg.pszContent =
+            L"Print Screen will open HdrSnip’s snip instead of Windows Snipping Tool, while HdrSnip is "
+            L"running (including from the tray). Other keys are not affected.";
         cfg.pszFooterIcon = TD_INFORMATION_ICON;
         cfg.pszFooter = L"You can change this any time under Settings (gear icon).";
         cfg.cButtons = ARRAYSIZE(buttons);
@@ -422,7 +424,10 @@ namespace
         cfg.pszWindowTitle = L"HdrSnip";
         cfg.pszMainIcon = TD_INFORMATION_ICON;
         cfg.pszMainInstruction = L"Want Print Screen to open Snipping Tool again?";
-        cfg.pszContent = L"In the settings page that opens, turn on “Use the Print screen key to open screen capture”.";
+        cfg.pszContent =
+            L"Turn on “Use the Print screen key to open screen capture” in:\n"
+            L"Settings → Bluetooth & devices → Keyboard → Shortcuts and hotkeys\n\n"
+            L"On older Windows versions it is under Settings → Accessibility → Keyboard.";
         cfg.cButtons = ARRAYSIZE(buttons);
         cfg.pButtons = buttons;
         int pressed = 0;
