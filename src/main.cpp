@@ -16,7 +16,7 @@
 
 namespace
 {
-    enum HotkeyId { kSnip = 1, kQuit = 2 };
+    enum HotkeyId { kSnip = 1, kQuit = 2, kSnipPrintScreen = 3 };
     constexpr ULONG_PTR kCopyStream = 0x48445253; // WM_COPYDATA tag: "--stream" from a second launch
 
     void ShowError(const std::wstring& text)
@@ -96,12 +96,105 @@ namespace
         return false;
     }
 
-    // --- Launcher window: Snipping-Tool-style "+ New snip" bar. Closing it quits the app. ---
+    // --- Launcher window: Snipping-Tool-style "+ New snip" bar. Closing it hides HdrSnip to the
+    //     notification area (tray) so the hotkeys keep working; Quit is in the tray menu. ---
 
     constexpr int kNewSnip = 201, kStream = 202, kDelay = 203;
     constexpr UINT_PTR kDelayTimer = 1;
     constexpr int kDelayChoices[] = { 0, 3, 5, 10 };
     constexpr wchar_t kSettingsKey[] = L"Software\\HdrSnip";
+    constexpr wchar_t kRunKey[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+    constexpr UINT kTrayMessage = WM_APP + 1;
+    enum TrayCommand { kTraySnip = 1, kTrayStream, kTrayOpen, kTrayAutostart, kTrayQuit };
+    HWND g_main = nullptr;
+    bool g_printScreen = false; // whether we own the Print Screen key
+    UINT g_taskbarCreated = 0;  // Explorer restarted: the tray icon must be re-added
+
+    bool ReadFlag(const wchar_t* name)
+    {
+        DWORD value = 0, size = sizeof(value);
+        RegGetValueW(HKEY_CURRENT_USER, kSettingsKey, name, RRF_RT_REG_DWORD, nullptr, &value, &size);
+        return value != 0;
+    }
+
+    void WriteFlag(const wchar_t* name, bool on)
+    {
+        DWORD value = on;
+        RegSetKeyValueW(HKEY_CURRENT_USER, kSettingsKey, name, REG_DWORD, &value, sizeof(value));
+    }
+
+    // Start with Windows = an HKCU Run entry that launches straight into the tray.
+    std::wstring AutostartCommand()
+    {
+        wchar_t exe[MAX_PATH];
+        GetModuleFileNameW(nullptr, exe, MAX_PATH);
+        return L"\"" + std::wstring(exe) + L"\" --tray";
+    }
+
+    bool IsAutostartOn()
+    {
+        wchar_t value[MAX_PATH + 32] = {};
+        DWORD size = sizeof(value);
+        if (RegGetValueW(HKEY_CURRENT_USER, kRunKey, L"HdrSnip", RRF_RT_REG_SZ, nullptr, value, &size) != ERROR_SUCCESS)
+            return false;
+        return _wcsicmp(value, AutostartCommand().c_str()) == 0; // stale path (exe moved) counts as off
+    }
+
+    void SetAutostart(bool on)
+    {
+        if (on)
+        {
+            const std::wstring cmd = AutostartCommand();
+            RegSetKeyValueW(HKEY_CURRENT_USER, kRunKey, L"HdrSnip", REG_SZ, cmd.c_str(), DWORD((cmd.size() + 1) * sizeof(wchar_t)));
+        }
+        else
+        {
+            RegDeleteKeyValueW(HKEY_CURRENT_USER, kRunKey, L"HdrSnip");
+        }
+    }
+
+    void AddTrayIcon(HWND hwnd)
+    {
+        NOTIFYICONDATAW nid{ sizeof(nid) };
+        nid.hWnd = hwnd;
+        nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP;
+        nid.uCallbackMessage = kTrayMessage;
+        nid.hIcon = static_cast<HICON>(LoadImageW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(1), IMAGE_ICON,
+            GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), 0));
+        wcscpy_s(nid.szTip, g_printScreen ? L"HdrSnip — Print Screen to snip" : L"HdrSnip — Ctrl+Alt+S to snip");
+        Shell_NotifyIconW(NIM_ADD, &nid);
+        nid.uVersion = NOTIFYICON_VERSION_4;
+        Shell_NotifyIconW(NIM_SETVERSION, &nid);
+    }
+
+    void RemoveTrayIcon(HWND hwnd)
+    {
+        NOTIFYICONDATAW nid{ sizeof(nid) };
+        nid.hWnd = hwnd;
+        Shell_NotifyIconW(NIM_DELETE, &nid);
+    }
+
+    // First time the window is closed, explain that HdrSnip is still running.
+    void ShowTrayHintOnce(HWND hwnd)
+    {
+        if (ReadFlag(L"TrayHintShown")) return;
+        WriteFlag(L"TrayHintShown", true);
+        NOTIFYICONDATAW nid{ sizeof(nid) };
+        nid.hWnd = hwnd;
+        nid.uFlags = NIF_INFO;
+        nid.dwInfoFlags = NIIF_USER | NIIF_LARGE_ICON;
+        wcscpy_s(nid.szInfoTitle, L"HdrSnip is still running");
+        wcscpy_s(nid.szInfo, g_printScreen
+            ? L"Press Print Screen to snip. Right-click the tray icon to quit."
+            : L"Press Ctrl+Alt+S to snip. Right-click the tray icon to quit.");
+        Shell_NotifyIconW(NIM_MODIFY, &nid);
+    }
+
+    void ShowLauncher()
+    {
+        ShowWindow(g_main, IsIconic(g_main) ? SW_RESTORE : SW_SHOW);
+        SetForegroundWindow(g_main);
+    }
 
     void LayoutLauncher(HWND hwnd, BOOL repaint)
     {
@@ -110,9 +203,9 @@ namespace
         MoveWindow(GetDlgItem(hwnd, kDelay), ui::Px(hwnd, 12 + 92 + 4), y, ui::Px(hwnd, 120), h, repaint);
         MoveWindow(GetDlgItem(hwnd, kStream), ui::Px(hwnd, 12 + 92 + 4 + 120 + 4), y, ui::Px(hwnd, 104), h, repaint);
     }
-    HWND g_main = nullptr;
-    int g_delaySeconds = 0;     // Snipping-Tool-style delay for New (the Ctrl+Alt+S hotkey is always instant)
+    int g_delaySeconds = 0;     // Snipping-Tool-style delay for New (the hotkeys are always instant)
     bool g_delayPending = false;
+    bool g_showAfterDelay = false;
 
     std::wstring DelayLabel(int seconds)
     {
@@ -134,12 +227,18 @@ namespace
         RegSetKeyValueW(HKEY_CURRENT_USER, kSettingsKey, L"DelaySeconds", REG_DWORD, &value, sizeof(value));
     }
 
+    bool LauncherVisible() { return g_main && IsWindowVisible(g_main) && !IsIconic(g_main); }
+
+    void RestoreLauncher() { ShowWindow(g_main, OpenPreviewCount() > 0 ? SW_SHOWNOACTIVATE : SW_SHOW); }
+
     void SnipFromLauncher()
     {
-        // Hide instantly (no fade animation) so the launcher isn't in the capture.
-        if (g_main) { ShowWindow(g_main, SW_HIDE); Sleep(80); }
+        // Hide instantly (no fade animation) so the launcher isn't in the capture; if it was in the
+        // tray, leave it there.
+        const bool wasVisible = LauncherVisible();
+        if (wasVisible) { ShowWindow(g_main, SW_HIDE); Sleep(80); }
         RunSnip(false);
-        if (g_main) ShowWindow(g_main, OpenPreviewCount() > 0 ? SW_SHOWNOACTIVATE : SW_SHOW);
+        if (wasVisible) RestoreLauncher();
     }
 
     // New button (launcher or preview): waits out the delay with the launcher hidden, so you can
@@ -149,8 +248,36 @@ namespace
         if (g_delayPending) return;
         if (!g_main || g_delaySeconds == 0) { SnipFromLauncher(); return; }
         g_delayPending = true;
+        g_showAfterDelay = LauncherVisible();
         ShowWindow(g_main, SW_HIDE);
         SetTimer(g_main, kDelayTimer, UINT(g_delaySeconds) * 1000, nullptr);
+    }
+
+    void ShowTrayMenu(HWND hwnd)
+    {
+        HMENU menu = CreatePopupMenu();
+        AppendMenuW(menu, MF_STRING, kTraySnip, g_printScreen ? L"New snip\tPrint Screen" : L"New snip\tCtrl+Alt+S");
+        AppendMenuW(menu, MF_STRING, kTrayStream, L"Stream…");
+        AppendMenuW(menu, MF_STRING, kTrayOpen, L"Open HdrSnip");
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, MF_STRING | (IsAutostartOn() ? MF_CHECKED : 0), kTrayAutostart, L"Start with Windows");
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, MF_STRING, kTrayQuit, L"Quit");
+        SetMenuDefaultItem(menu, kTrayOpen, FALSE);
+
+        POINT pt;
+        GetCursorPos(&pt);
+        SetForegroundWindow(hwnd); // required, or the menu won't close when clicking elsewhere
+        const UINT id = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, nullptr);
+        DestroyMenu(menu);
+        switch (id)
+        {
+        case kTraySnip: SnipFromLauncher(); break;
+        case kTrayStream: ChooseStreamSource(hwnd); break;
+        case kTrayOpen: ShowLauncher(); break;
+        case kTrayAutostart: SetAutostart(!IsAutostartOn()); break;
+        case kTrayQuit: DestroyWindow(hwnd); break;
+        }
     }
 
     void ChooseDelay(HWND hwnd)
@@ -193,7 +320,9 @@ namespace
         HFONT body = ui::TextFont(hwnd, 11), note = ui::TextFont(hwnd, 9);
         const int mid = (line.bottom + rc.bottom) / 2;
         ui::DrawLabel(mem, { 0, mid - ui::Px(hwnd, 28), rc.right, mid + ui::Px(hwnd, 2) },
-            L"Select New or press Ctrl+Alt+S to start a snip.", body, t.text, DT_CENTER | DT_SINGLELINE | DT_BOTTOM);
+            g_printScreen ? L"Select New or press Print Screen to start a snip."
+                          : L"Select New or press Ctrl+Alt+S to start a snip.",
+            body, t.text, DT_CENTER | DT_SINGLELINE | DT_BOTTOM);
         ui::DrawLabel(mem, { 0, mid + ui::Px(hwnd, 6), rc.right, mid + ui::Px(hwnd, 30) },
             L"Stream opens an HDR-corrected window to share in Discord (Go Live → Applications).",
             note, t.subtext, DT_CENTER | DT_SINGLELINE | DT_TOP);
@@ -209,8 +338,29 @@ namespace
 
     LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     {
+        if (msg == g_taskbarCreated && g_taskbarCreated)
+        {
+            AddTrayIcon(hwnd);
+            return 0;
+        }
         switch (msg)
         {
+        case kTrayMessage: // NOTIFYICON_VERSION_4: the event is in LOWORD(lp)
+            switch (LOWORD(lp))
+            {
+            case NIN_SELECT:
+            case NIN_KEYSELECT:
+                ShowLauncher();
+                break;
+            case WM_CONTEXTMENU:
+                ShowTrayMenu(hwnd);
+                break;
+            }
+            return 0;
+        case WM_CLOSE:
+            ShowWindow(hwnd, SW_HIDE);
+            ShowTrayHintOnce(hwnd);
+            return 0;
         case WM_CREATE:
         {
             ui::CreateButton(hwnd, kNewSnip, ui::kGlyphAdd, L"New", ui::ButtonStyle::Accent);
@@ -252,7 +402,8 @@ namespace
             {
                 KillTimer(hwnd, kDelayTimer);
                 g_delayPending = false;
-                SnipFromLauncher();
+                RunSnip(false);
+                if (g_showAfterDelay) RestoreLauncher();
             }
             return 0;
         case WM_COPYDATA:
@@ -271,13 +422,14 @@ namespace
             return 0;
         }
         case WM_DESTROY:
+            RemoveTrayIcon(hwnd);
             PostQuitMessage(0);
             return 0;
         }
         return DefWindowProcW(hwnd, msg, wp, lp);
     }
 
-    void CreateLauncher()
+    void CreateLauncher(bool show)
     {
         WNDCLASSW wc{};
         wc.lpfnWndProc = MainProc;
@@ -301,7 +453,9 @@ namespace
         g_main = CreateWindowExW(0, wc.lpszClassName, L"HdrSnip", style,
             (mi.rcWork.left + mi.rcWork.right - w) / 2, mi.rcWork.top + MulDiv(80, dpi, 96), w, h,
             nullptr, nullptr, wc.hInstance, nullptr);
-        ShowWindow(g_main, SW_SHOW);
+        g_taskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
+        AddTrayIcon(g_main);
+        if (show) ShowWindow(g_main, SW_SHOW);
     }
 
     void RunMessageLoop(bool exitWhenNoPreviews)
@@ -309,12 +463,16 @@ namespace
         MSG msg;
         while ((!exitWhenNoPreviews || OpenPreviewCount() > 0) && GetMessageW(&msg, nullptr, 0, 0) > 0)
         {
-            if (msg.message == WM_HOTKEY && msg.wParam == kSnip) SnipFromLauncher();
-            else if (msg.message == WM_HOTKEY && msg.wParam == kQuit) break;
+            if (msg.message == WM_HOTKEY && (msg.wParam == kSnip || msg.wParam == kSnipPrintScreen)) SnipFromLauncher();
+            else if (msg.message == WM_HOTKEY && msg.wParam == kQuit)
+            {
+                if (!g_main) break;
+                DestroyWindow(g_main); // removes the tray icon, then posts WM_QUIT
+            }
             if (g_main && msg.message == WM_KEYDOWN && msg.wParam == 'N' && GetKeyState(VK_CONTROL) < 0 &&
                 GetAncestor(msg.hwnd, GA_ROOT) == g_main)
             {
-                SnipFromLauncher();
+                NewSnipWithDelay();
                 continue;
             }
             if (HandlePreviewKey(msg)) continue;
@@ -356,18 +514,24 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             SendMessageW(existing, WM_COPYDATA, 0, reinterpret_cast<LPARAM>(&cds));
             return 0;
         }
-        ShowWindow(existing, SW_RESTORE);
-        SetForegroundWindow(existing);
+        if (arg != L"--tray") // works when it's hidden in the tray, too
+        {
+            ShowWindow(existing, IsIconic(existing) ? SW_RESTORE : SW_SHOW);
+            SetForegroundWindow(existing);
+        }
         return 0;
     }
 
-    // The hotkey is a bonus; the launcher still works if another app owns it.
+    // Hotkeys are a bonus; the launcher still works if another app owns them. Print Screen is only
+    // free once Windows' "Use the Print screen key to open screen capture" setting is off.
     RegisterHotKey(nullptr, kSnip, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'S');
     RegisterHotKey(nullptr, kQuit, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'Q');
-    CreateLauncher();
+    g_printScreen = RegisterHotKey(nullptr, kSnipPrintScreen, MOD_NOREPEAT, VK_SNAPSHOT) != FALSE;
+    CreateLauncher(arg != L"--tray"); // --tray: start hidden (used by Start with Windows)
     if (arg == L"--stream") OpenShareWindow(arg2.c_str()); // optional: part of a window title
     RunMessageLoop(false);
     UnregisterHotKey(nullptr, kSnip);
     UnregisterHotKey(nullptr, kQuit);
+    UnregisterHotKey(nullptr, kSnipPrintScreen);
     return 0;
 }

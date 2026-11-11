@@ -11,15 +11,22 @@ reads the monitor's **SDR content brightness**, and tone-maps properly:
 - Brighter-than-SDR highlights roll off smoothly instead of clipping.
 
 ## Use
-Launch `HdrSnip.exe` to open a small window with a **+ New snip** button (Ctrl+N). While it's open,
-**Ctrl+Alt+S** snips from anywhere. Closing the window quits the app; launching it again brings the
-existing window forward.
+Launch `HdrSnip.exe` to open a small window with a **+ New snip** button (Ctrl+N). Closing the window
+hides HdrSnip to the notification area (tray), where it keeps listening for **Print Screen** and
+**Ctrl+Alt+S**. Click the tray icon to reopen the window; right-click it for New snip, Stream,
+**Start with Windows** and Quit. Launching the exe again brings the existing window forward.
+
+**Print Screen:** Windows 11 gives this key to its own Snipping Tool by default. Turn off
+*Settings → Accessibility → Keyboard → "Use the Print screen key to open screen capture"*, then restart
+HdrSnip. The window's hint text says which key is active. If another app (keyboard software, OneDrive,
+Dropbox) still holds Print Screen, HdrSnip falls back to Ctrl+Alt+S.
 
 | | |
 |---|---|
-| `+ New snip` / `Ctrl+N` / `Ctrl+Alt+S` | Snip: drag a region (a click alone = whole monitor; Esc/right-click cancels) |
+| `+ New snip` / `Ctrl+N` / `Print Screen` / `Ctrl+Alt+S` | Snip: drag a region (a click alone = whole monitor; Esc/right-click cancels) |
 | Delay button | No delay / 3 / 5 / 10 seconds before **New** freezes the screen (remembered; the hotkey is always instant) |
 | `Ctrl+Alt+Q` | Quit |
+| `HdrSnip.exe --tray` | Start hidden in the tray (what Start with Windows uses) |
 | `HdrSnip.exe --snip` | One-shot snip; exits when the preview closes |
 | `HdrSnip.exe --fullscreen` | Headless: capture the monitor under the cursor and save PNG + JXR to `Pictures\HdrSnip` |
 
@@ -79,6 +86,6 @@ MIT, see [LICENSE](LICENSE).
 
 ## Roadmap
 1. Ultra HDR: also write the ISO 21496-1 metadata block (newer viewers prefer it over the XMP form).
-2. **Tray icon** and settings (hotkey, output folder, which formats to save).
+2. Settings: custom hotkey, default save folder and format.
 3. Stream overlay (webcam corner, text) and streaming a single window or region instead of a whole display.
 4. Optional virtual-camera output.
